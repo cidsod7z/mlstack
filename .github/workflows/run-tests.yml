@@ -1,72 +1,58 @@
 name: ML Code Tests for cjc-ml
-on:
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
   pull_request:
     paths-ignore:
-      - 'cjc-ml/terraform/**'
-
+    - cjc-ml/terraform/**
 env:
   DATABRICKS_HOST: https://adb-xxxx.xx.azuredatabricks.net
   NODE_TYPE_ID: Standard_D3_v2
-  
-  
 jobs:
   unit_tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
-        with:
-          python-version: 3.8
-      # Feature store tests bring up a local Spark session, so Java is required.
-      - uses: actions/setup-java@v2
-        with:
-          distribution: 'temurin'
-          java-version: '11'
-      - name: Install dependencies
-        run: |
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-            pip install -r test-requirements.txt
-      - name: Run tests with pytest
-        run: pytest
-  
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+    - uses: actions/setup-java@v2
+      with:
+        distribution: temurin
+        java-version: '11'
+    - name: Install dependencies
+      run: 'python -m pip install --upgrade pip
+
+        pip install -r requirements.txt
+
+        pip install -r test-requirements.txt
+
+        '
+    - name: Run tests with pytest
+      run: pytest
   integration_test:
     needs: unit_tests
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-      - name: Generate AAD Token
-        run: ./.github/workflows/scripts/generate-aad-token.sh ${{ secrets.stagingAzureSpTenantId }} ${{ secrets.stagingAzureSpApplicationId }} ${{ secrets.stagingAzureSpClientSecret }}
-      - name: Train model
-        uses: databricks/run-notebook@v0
-        id: train
-        with:
-          local-notebook-path: cjc-ml/training/notebooks/TrainWithFeatureStore.py
-          git-commit: ${{ github.event.pull_request.head.sha || github.sha }}
-          git-provider: gitHub
-          new-cluster-json: >
-            {
-              "spark_version": "11.0.x-cpu-ml-scala2.12",
-              "node_type_id": "${{ env.NODE_TYPE_ID }}",
-              "num_workers": 0,
-              "spark_conf": {
-                "spark.databricks.cluster.profile": "singleNode",
-                "spark.master": "local[*, 4]"
-              },
-              "custom_tags": {
-                "ResourceClass": "SingleNode",
-                "clusterSource": "mlops-stack/0.0"
-              }
-            }
-          access-control-list-json: >
-            [
-              {
-                "group_name": "users",
-                "permission_level": "CAN_VIEW"
-              }
-            ]
-          run-name: cjc-ml Integration Test
-          
-          pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Checkout repo
+      uses: actions/checkout@v3
+    - name: Generate AAD Token
+      run: ./.github/workflows/scripts/generate-aad-token.sh ${{ secrets.stagingAzureSpTenantId
+        }} ${{ secrets.stagingAzureSpApplicationId }} ${{ secrets.stagingAzureSpClientSecret
+        }}
+    - name: Train model
+      uses: databricks/run-notebook@v0
+      id: train
+      with:
+        local-notebook-path: cjc-ml/training/notebooks/TrainWithFeatureStore.py
+        git-commit: ${{ github.event.pull_request.head.sha || github.sha }}
+        git-provider: gitHub
+        new-cluster-json: "{\n  \"spark_version\": \"11.0.x-cpu-ml-scala2.12\",\n\
+          \  \"node_type_id\": \"${{ env.NODE_TYPE_ID }}\",\n  \"num_workers\": 0,\n\
+          \  \"spark_conf\": {\n    \"spark.databricks.cluster.profile\": \"singleNode\"\
+          ,\n    \"spark.master\": \"local[*, 4]\"\n  },\n  \"custom_tags\": {\n \
+          \   \"ResourceClass\": \"SingleNode\",\n    \"clusterSource\": \"mlops-stack/0.0\"\
+          \n  }\n}\n"
+        access-control-list-json: "[\n  {\n    \"group_name\": \"users\",\n    \"\
+          permission_level\": \"CAN_VIEW\"\n  }\n]\n"
+        run-name: cjc-ml Integration Test
+        pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
