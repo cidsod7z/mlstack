@@ -1,181 +1,107 @@
 name: Feature and Training Integration Tests for cjc-ml
-on:
-  workflow_dispatch:
+'on':
+  workflow_dispatch: null
   pull_request:
     paths-ignore:
-      - 'cjc-ml/terraform/**'
-
+    - cjc-ml/terraform/**
 env:
   DATABRICKS_HOST: https://adb-xxxx.xx.azuredatabricks.net
   NODE_TYPE_ID: Standard_D3_v2
-  
-
 concurrency: cjc-ml-feature-training-integration-test-staging
-
 jobs:
   unit_tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
-        with:
-          python-version: 3.8
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r test-requirements.txt
-      - name: Run tests with pytest
-        run: pytest
-  
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+    - name: Install dependencies
+      run: 'python -m pip install --upgrade pip
+
+        pip install -r requirements.txt
+
+        pip install -r test-requirements.txt
+
+        '
+    - name: Run tests with pytest
+      run: pytest
   integration_test:
     needs: unit_tests
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-      - name: Generate AAD Token
-        run: ./.github/workflows/scripts/generate-aad-token.sh ${{ secrets.stagingAzureSpTenantId }} ${{ secrets.stagingAzureSpApplicationId }} ${{ secrets.stagingAzureSpClientSecret }}
-      # This step populates a JSON Databricks job payload that will be submitted as an integration test run.
-      # It currently builds a one-off multi-task job that contains feature engineering tasks to populate Feature
-      # Store tables, and a training task that uses those tables. 
-      # You will need to modify the contents below to fit your pipelines (both # of tasks and input parameters for each
-      # task).
-      - name: Build JSON job payload for integration test
-        uses: actions/github-script@v6
-        id: integration-test-content
-        with:
-          # TODO update the tasks and notebook parameters below to match your integration test setup.
-          script: |
-            const output = `
-                    {
-            "run_name": "features-training-integration-test",
-            "tasks": [
-              {
-                "task_key": "pickup-features",
-                "notebook_task": {
-                  "notebook_path": "cjc-ml/feature_engineering/notebooks/GenerateAndWriteFeatures", 
-                  "base_parameters": {
-                    "test_mode": "True",
-                    "input_table_path": "/databricks-datasets/nyctaxi-with-zipcodes/subsampled",
-                    "timestamp_column": "tpep_pickup_datetime",
-                    "output_table_name": "feature_store_taxi_example.trip_pickup_features_test",
-                    "features_transform_module": "pickup_features",
-                    "primary_keys": "zip"
-                  }
-                },
-                "new_cluster": {
-                  "spark_version": "11.0.x-cpu-ml-scala2.12",
-                  "node_type_id": "${{ env.NODE_TYPE_ID }}",
-                  "num_workers": 0,
-                  "spark_conf": {
-                    "spark.databricks.cluster.profile": "singleNode",
-                    "spark.master": "local[*, 4]"
-                  },
-                  "custom_tags": {
-                    "ResourceClass": "SingleNode",
-                    "clusterSource": "mlops-stack/0.0"
-                  }
-                }
-              },
-              {
-                "task_key": "dropoff-features",
-                "notebook_task": {
-                  "notebook_path": "cjc-ml/feature_engineering/notebooks/GenerateAndWriteFeatures",
-                  "base_parameters": {                    
-                    "test_mode": "True",
-                    "input_table_path": "/databricks-datasets/nyctaxi-with-zipcodes/subsampled",
-                    "timestamp_column": "tpep_dropoff_datetime",
-                    "output_table_name": "feature_store_taxi_example.trip_dropoff_features_test",
-                    "features_transform_module": "dropoff_features",
-                    "primary_keys": "zip"
-                  }
-                },
-                "new_cluster": {
-                  "spark_version": "11.0.x-cpu-ml-scala2.12",
-                  "node_type_id": "${{ env.NODE_TYPE_ID }}",
-                  "num_workers": 0,
-                  "spark_conf": {
-                    "spark.databricks.cluster.profile": "singleNode",
-                    "spark.master": "local[*, 4]"
-                  },
-                  "custom_tags": {
-                    "ResourceClass": "SingleNode",
-                    "clusterSource": "mlops-stack/0.0"
-                  }
-                }
-              },
-              {
-                "task_key": "training",
-                "depends_on": [
-                  {
-                    "task_key": "dropoff-features"
-                  },
-                  {
-                    "task_key": "pickup-features"
-                  }
-                ],
-                "notebook_task": {
-                  "notebook_path": "cjc-ml/feature_engineering/notebooks/TrainWithFeatureStore",
-                  "base_parameters": {
-                    "test_mode": "True",
-                    "training_data_path": "/databricks-datasets/nyctaxi-with-zipcodes/subsampled",
-                    "experiment_name": "/cjc-ml/cjc-ml-experiment-test",
-                    "model_name": "cjc-ml-model-test"
-                  }
-                },
-                "new_cluster": {
-                  "spark_version": "11.0.x-cpu-ml-scala2.12",
-                  "node_type_id": "${{ env.NODE_TYPE_ID }}",
-                  "num_workers": 0,
-                  "spark_conf": {
-                    "spark.databricks.cluster.profile": "singleNode",
-                    "spark.master": "local[*, 4]"
-                  },
-                  "custom_tags": {
-                    "ResourceClass": "SingleNode",
-                    "clusterSource": "mlops-stack/0.0"
-                  }
-                }
-              }
-            ],
-            "git_source": {
-              "git_url": "${{ github.server_url }}/${{ github.repository }}",
-              "git_provider": "gitHub",
-              "git_commit": "${{ github.event.pull_request.head.sha || github.sha }}"
-            },
-            "access_control_list": [
-              {
-                "group_name": "users",
-                "permission_level": "CAN_VIEW"
-              }
-            ]
-            }`
-            return output.replace(/\r?\n|\r/g, '')    
-      - name: Feature Store/Model Training Integration Test
-        id: features-training-integration-test
-        run: |
-          python -m pip install --upgrade pip
-          pip install databricks-cli
-          databricks jobs configure --version=2.1
-          echo ${{steps.integration-test-content.outputs.result}} > test.json 
-          databricks runs submit --json-file test.json --wait > tmp-output.json
-          # We want to extract the run id as it's useful to show in the Github UI (as a comment).
-          head -3  tmp-output.json  | jq '.run_id'  > run-id.json
-          databricks runs get --run-id "$(cat run-id.json)" | jq -r '.run_page_url' > run-page-url.json
-          echo "run-url=$(cat run-page-url.json)" >> "$GITHUB_OUTPUT"
-      - name: Create Comment with Training Model Output
-        uses: actions/github-script@v6
-        id: comment
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const output = `
-            The training integration test run is available [here](${{ steps.features-training-integration-test.outputs.run-url }}).`
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: output
-            })
+    - name: Checkout repo
+      uses: actions/checkout@v3
+    - name: Generate AAD Token
+      run: ./.github/workflows/scripts/generate-aad-token.sh ${{ secrets.stagingAzureSpTenantId
+        }} ${{ secrets.stagingAzureSpApplicationId }} ${{ secrets.stagingAzureSpClientSecret
+        }}
+    - name: Build JSON job payload for integration test
+      uses: actions/github-script@v6
+      id: integration-test-content
+      with:
+        script: "const output = `\n        {\n\"run_name\": \"features-training-integration-test\"\
+          ,\n\"tasks\": [\n  {\n    \"task_key\": \"pickup-features\",\n    \"notebook_task\"\
+          : {\n      \"notebook_path\": \"cjc-ml/feature_engineering/notebooks/GenerateAndWriteFeatures\"\
+          , \n      \"base_parameters\": {\n        \"test_mode\": \"True\",\n   \
+          \     \"input_table_path\": \"/databricks-datasets/nyctaxi-with-zipcodes/subsampled\"\
+          ,\n        \"timestamp_column\": \"tpep_pickup_datetime\",\n        \"output_table_name\"\
+          : \"feature_store_taxi_example.trip_pickup_features_test\",\n        \"\
+          features_transform_module\": \"pickup_features\",\n        \"primary_keys\"\
+          : \"zip\"\n      }\n    },\n    \"new_cluster\": {\n      \"spark_version\"\
+          : \"11.0.x-cpu-ml-scala2.12\",\n      \"node_type_id\": \"${{ env.NODE_TYPE_ID\
+          \ }}\",\n      \"num_workers\": 0,\n      \"spark_conf\": {\n        \"\
+          spark.databricks.cluster.profile\": \"singleNode\",\n        \"spark.master\"\
+          : \"local[*, 4]\"\n      },\n      \"custom_tags\": {\n        \"ResourceClass\"\
+          : \"SingleNode\",\n        \"clusterSource\": \"mlops-stack/0.0\"\n    \
+          \  }\n    }\n  },\n  {\n    \"task_key\": \"dropoff-features\",\n    \"\
+          notebook_task\": {\n      \"notebook_path\": \"cjc-ml/feature_engineering/notebooks/GenerateAndWriteFeatures\"\
+          ,\n      \"base_parameters\": {                    \n        \"test_mode\"\
+          : \"True\",\n        \"input_table_path\": \"/databricks-datasets/nyctaxi-with-zipcodes/subsampled\"\
+          ,\n        \"timestamp_column\": \"tpep_dropoff_datetime\",\n        \"\
+          output_table_name\": \"feature_store_taxi_example.trip_dropoff_features_test\"\
+          ,\n        \"features_transform_module\": \"dropoff_features\",\n      \
+          \  \"primary_keys\": \"zip\"\n      }\n    },\n    \"new_cluster\": {\n\
+          \      \"spark_version\": \"11.0.x-cpu-ml-scala2.12\",\n      \"node_type_id\"\
+          : \"${{ env.NODE_TYPE_ID }}\",\n      \"num_workers\": 0,\n      \"spark_conf\"\
+          : {\n        \"spark.databricks.cluster.profile\": \"singleNode\",\n   \
+          \     \"spark.master\": \"local[*, 4]\"\n      },\n      \"custom_tags\"\
+          : {\n        \"ResourceClass\": \"SingleNode\",\n        \"clusterSource\"\
+          : \"mlops-stack/0.0\"\n      }\n    }\n  },\n  {\n    \"task_key\": \"training\"\
+          ,\n    \"depends_on\": [\n      {\n        \"task_key\": \"dropoff-features\"\
+          \n      },\n      {\n        \"task_key\": \"pickup-features\"\n      }\n\
+          \    ],\n    \"notebook_task\": {\n      \"notebook_path\": \"cjc-ml/feature_engineering/notebooks/TrainWithFeatureStore\"\
+          ,\n      \"base_parameters\": {\n        \"test_mode\": \"True\",\n    \
+          \    \"training_data_path\": \"/databricks-datasets/nyctaxi-with-zipcodes/subsampled\"\
+          ,\n        \"experiment_name\": \"/cjc-ml/cjc-ml-experiment-test\",\n  \
+          \      \"model_name\": \"cjc-ml-model-test\"\n      }\n    },\n    \"new_cluster\"\
+          : {\n      \"spark_version\": \"11.0.x-cpu-ml-scala2.12\",\n      \"node_type_id\"\
+          : \"${{ env.NODE_TYPE_ID }}\",\n      \"num_workers\": 0,\n      \"spark_conf\"\
+          : {\n        \"spark.databricks.cluster.profile\": \"singleNode\",\n   \
+          \     \"spark.master\": \"local[*, 4]\"\n      },\n      \"custom_tags\"\
+          : {\n        \"ResourceClass\": \"SingleNode\",\n        \"clusterSource\"\
+          : \"mlops-stack/0.0\"\n      }\n    }\n  }\n],\n\"git_source\": {\n  \"\
+          git_url\": \"${{ github.server_url }}/${{ github.repository }}\",\n  \"\
+          git_provider\": \"gitHub\",\n  \"git_commit\": \"${{ github.event.pull_request.head.sha\
+          \ || github.sha }}\"\n},\n\"access_control_list\": [\n  {\n    \"group_name\"\
+          : \"users\",\n    \"permission_level\": \"CAN_VIEW\"\n  }\n]\n}`\nreturn\
+          \ output.replace(/\\r?\\n|\\r/g, '')    \n"
+    - name: Feature Store/Model Training Integration Test
+      id: features-training-integration-test
+      run: "python -m pip install --upgrade pip\npip install databricks-cli\ndatabricks\
+        \ jobs configure --version=2.1\necho ${{steps.integration-test-content.outputs.result}}\
+        \ > test.json \ndatabricks runs submit --json-file test.json --wait > tmp-output.json\n\
+        # We want to extract the run id as it's useful to show in the Github UI (as\
+        \ a comment).\nhead -3  tmp-output.json  | jq '.run_id'  > run-id.json\ndatabricks\
+        \ runs get --run-id \"$(cat run-id.json)\" | jq -r '.run_page_url' > run-page-url.json\n\
+        echo \"run-url=$(cat run-page-url.json)\" >> \"$GITHUB_OUTPUT\"\n"
+    - name: Create Comment with Training Model Output
+      uses: actions/github-script@v6
+      id: comment
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: "const output = `\nThe training integration test run is available\
+          \ [here](${{ steps.features-training-integration-test.outputs.run-url }}).`\n\
+          \ngithub.rest.issues.createComment({\n  issue_number: context.issue.number,\n\
+          \  owner: context.repo.owner,\n  repo: context.repo.repo,\n  body: output\n\
+          })\n"
